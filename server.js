@@ -10,32 +10,30 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
+const KEY = process.env.GEMINI_API_KEY;
 
-// ✅ HOME ROUTE
+// ✅ Health check
 app.get("/", (req, res) => {
-  res.json({ status: "ok", message: "Server is running 🚀" });
+  res.json({ status: "ok" });
 });
 
-// ✅ DEBUG ROUTE
+// ✅ Debug route (open in browser)
 app.get("/debug", (req, res) => {
   res.json({
     ok: true,
     node: process.version,
-    hasKey: !!process.env.GEMINI_API_KEY,
-    keyLen: process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 0,
+    hasKey: !!KEY,
+    keyLen: KEY ? KEY.length : 0,
   });
 });
 
-// ✅ ASK AI ROUTE
 app.post("/ask-ai", async (req, res) => {
   try {
-    const { prompt } = req.body;
+    const prompt = req.body?.prompt;
 
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: "prompt is required (string)" });
     }
-
-    const KEY = process.env.GEMINI_API_KEY;
 
     if (!KEY) {
       return res.status(500).json({
@@ -44,38 +42,35 @@ app.post("/ask-ai", async (req, res) => {
     }
 
     const url =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" +
-      KEY;
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
 
-    const response = await fetch(url, {
+    const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": KEY,
+      },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
       }),
     });
 
-    const data = await response.json();
+    const data = await resp.json();
 
-    if (!response.ok) {
-      return res.status(response.status).json({
+    if (!resp.ok) {
+      return res.status(resp.status).json({
         error: "Gemini API error",
         details: data,
       });
     }
 
     const answer =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response";
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "(no text)";
 
     res.json({ answer });
   } catch (err) {
-    res.status(500).json({
-      error: "Internal server error",
-      details: String(err),
-    });
+    res.status(500).json({ error: "Server error", details: String(err) });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log("Server running on port", PORT));
