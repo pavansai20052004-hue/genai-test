@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -9,31 +10,23 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 5000;
-const KEY = process.env.GEMINI_API_KEY;
 
-// ✅ Health check
-app.get("/", (req, res) => res.json({ status: "ok" }));
+// ✅ HOME ROUTE
+app.get("/", (req, res) => {
+  res.json({ status: "ok", message: "Server is running 🚀" });
+});
 
-// ✅ Debug route (to check Render env key)
+// ✅ DEBUG ROUTE
 app.get("/debug", (req, res) => {
   res.json({
     ok: true,
     node: process.version,
-    hasKey: !!KEY,
-    keyLen: KEY ? KEY.length : 0,
+    hasKey: !!process.env.GEMINI_API_KEY,
+    keyLen: process.env.GEMINI_API_KEY ? process.env.GEMINI_API_KEY.length : 0,
   });
 });
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-function is429(errText) {
-  const msg = String(errText || "");
-  return msg.includes("429") || msg.toLowerCase().includes("too many requests");
-}
-
-// ✅ Main API
+// ✅ ASK AI ROUTE
 app.post("/ask-ai", async (req, res) => {
   try {
     const { prompt } = req.body;
@@ -42,6 +35,8 @@ app.post("/ask-ai", async (req, res) => {
       return res.status(400).json({ error: "prompt is required (string)" });
     }
 
+    const KEY = process.env.GEMINI_API_KEY;
+
     if (!KEY) {
       return res.status(500).json({
         error: "GEMINI_API_KEY missing on server (Render env vars)",
@@ -49,54 +44,38 @@ app.post("/ask-ai", async (req, res) => {
     }
 
     const url =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" +
+      KEY;
 
-    // retry for 429 (rate limit)
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": KEY,
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-        }),
-      });
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+    });
 
-      const data = await resp.json().catch(() => ({}));
+    const data = await response.json();
 
-      if (resp.ok) {
-        const answer =
-          data?.candidates?.[0]?.content?.parts
-            ?.map((p) => p.text)
-            .join("") || "No response";
-        return res.json({ answer });
-      }
-
-      const msg = data?.error?.message || JSON.stringify(data);
-
-      // if 429, wait and retry
-      if (resp.status === 429 || is429(msg)) {
-        await sleep(3000 * attempt);
-        continue;
-      }
-
-      // other errors
-      return res.status(resp.status).json({
+    if (!response.ok) {
+      return res.status(response.status).json({
         error: "Gemini API error",
         details: data,
       });
     }
 
-    return res.status(429).json({
-      error: "Rate limit (429). Wait 30-60 seconds and try again.",
+    const answer =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text || "No response";
+
+    res.json({ answer });
+  } catch (err) {
+    res.status(500).json({
+      error: "Internal server error",
+      details: String(err),
     });
-  } catch (e) {
-    return res.status(500).json({ error: "Server error", details: String(e) });
   }
 });
 
 app.listen(PORT, () => {
-  console.log("✅ Server running on port", PORT);
+  console.log(`✅ Server running on port ${PORT}`);
 });
