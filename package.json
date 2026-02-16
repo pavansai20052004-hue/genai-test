@@ -2,7 +2,6 @@
   "name": "genai-test",
   "version": "1.0.0",
   "description": "",
-  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,11 +10,11 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "type": "module",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
-    "expres": "^0.0.5",
     "express": "^5.2.1",
     "node-fetch": "^3.3.2"
   }

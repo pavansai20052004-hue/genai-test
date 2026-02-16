@@ -1,3 +1,7 @@
+// server.js  (ESM)
+// Works on Render + Express 5 (no app.all("*") crash)
+// Uses global fetch (Node 18+ / Node 20 OK)
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -5,106 +9,109 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
+
+// ---------- Middlewares ----------
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
-const PORT = process.env.PORT || 5000;
+// ---------- Health ----------
+app.get("/", (req, res) => {
+  res.json({ status: "ok" });
+});
 
-// ---------- Helpers ----------
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-async function callGemini(prompt) {
-  const KEY = process.env.GEMINI_API_KEY;
-  if (!KEY) throw new Error("GEMINI_API_KEY missing in Render env vars");
-
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${KEY}`;
-
-  const maxAttempts = 4;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-      }),
-    });
-
-    const data = await resp.json().catch(() => ({}));
-
-    if (resp.ok) {
-      return (
-        data?.candidates?.[0]?.content?.parts?.[0]?.text || "No text returned"
-      );
-    }
-
-    // Retry on 429
-    if (resp.status === 429 && attempt < maxAttempts) {
-      await sleep(3000 * attempt);
-      continue;
-    }
-
-    throw new Error(`Gemini Error ${resp.status}: ${JSON.stringify(data)}`);
-  }
-
-  throw new Error("Rate limit retries exhausted");
-}
-
-// ---------- Routes ----------
-app.get("/", (req, res) => res.json({ status: "ok" }));
-
+// ---------- Debug: check env + node ----------
 app.get("/debug", (req, res) => {
   const key = process.env.GEMINI_API_KEY || "";
   res.json({
     ok: true,
     node: process.version,
     hasKey: Boolean(key),
-    keyLen: key ? key.length : 0,
+    keyLen: key.length,
   });
 });
 
+// ---------- List routes (safe for Express 4/5) ----------
 app.get("/routes", (req, res) => {
-  const routes = [];
-  app._router.stack.forEach((m) => {
-    if (m.route && m.route.path) {
-      const methods = Object.keys(m.route.methods).map((x) => x.toUpperCase());
-      routes.push({ path: m.route.path, methods });
+  try {
+    const stack = app?.router?.stack || app?._router?.stack || [];
+    const routes = [];
+
+    for (const layer of stack) {
+      if (layer?.route?.path) {
+        const methods = Object.keys(layer.route.methods || {})
+          .map((m) => m.toUpperCase())
+          .sort();
+        routes.push({ path: layer.route.path, methods });
+      }
     }
-  });
-  res.json(routes);
+
+    res.json(routes);
+  } catch (e) {
+    res.status(500).json({ error: "routes list failed", details: String(e) });
+  }
 });
 
-app.post("/ask-ai", async (req, res) => {
+// ---------- Gemini call ----------
+async function callGemini(prompt) {
+  const KEY = process.env.GEMINI_API_KEY;
+  if (!KEY) {
+    throw new Error("GEMINI_API_KEY missing on server (Render env vars)");
+  }
+
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${KEY}`;
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+    }),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+
+  if (!resp.ok) {
+    // show real google error
+    throw new Error(
+      `Gemini API failed (${resp.status}): ${JSON.stringify(data)}`
+    );
+  }
+
+  const text =
+    data?.candidates?.[0]?.content?.parts?.[0]?.text ??
+    "No text returned from Gemini";
+  return text;
+}
+
+// ---------- API route ----------
+app.post("/ask-ai", async (req, res, next) => {
   try {
-    const { prompt } = req.body;
+    const { prompt } = req.body || {};
 
     if (!prompt || typeof prompt !== "string") {
       return res.status(400).json({ error: "prompt is required (string)" });
     }
 
     const answer = await callGemini(prompt);
-    return res.json({ answer });
+    res.json({ answer });
   } catch (err) {
-    const msg = String(err?.message || err);
-
-    if (msg.includes("429") || msg.toLowerCase().includes("too many requests")) {
-      return res.status(429).json({
-        error: "Rate limit",
-        details: msg,
-        tip: "Wait 30–60 seconds and try again.",
-      });
-    }
-
-    return res.status(500).json({
-      error: "Server error",
-      details: msg,
-    });
+    next(err);
   }
 });
 
-// ✅ Express 5 safe 404 handler (MUST be last)
+// ---------- Error handler (prevents random 500 crashes) ----------
+app.use((err, req, res, next) => {
+  const msg = err?.message ? String(err.message) : String(err);
+  console.error("❌ ERROR:", msg);
+
+  res.status(500).json({
+    error: "Server error",
+    details: msg,
+  });
+});
+
+// ---------- Catch-all LAST (Express 5 safe) ----------
 app.use((req, res) => {
   res.status(404).json({
     error: "Not Found",
@@ -113,4 +120,8 @@ app.use((req, res) => {
   });
 });
 
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+// ---------- Listen (Render uses PORT) ----------
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
