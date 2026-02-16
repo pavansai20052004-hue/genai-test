@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GenAI Chat</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">✨</div>
+        <div>
+          <h1>GenAI Chat</h1>
+          <p class="sub">Powered by Gemini • Your Render API</p>
+        </div>
+      </div>
+
+      <div class="right">
+        <button id="themeBtn" class="ghost" title="Toggle theme">🌙</button>
+        <button id="clearBtn" class="ghost" title="Clear chat">🗑️</button>
+      </div>
+    </header>
+
+    <main class="chat" id="chat"></main>
+
+    <footer class="composer">
+      <form id="chatForm" class="composer-inner">
+        <input id="promptInput" type="text" placeholder="Type a message..." autocomplete="off" />
+        <button id="sendBtn" type="submit">
+          <span>Send</span>
+          <span class="arrow">➤</span>
+        </button>
+      </form>
+      <div class="hint">
+        Enter to send • Shift+Enter not supported in this simple UI
+      </div>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
