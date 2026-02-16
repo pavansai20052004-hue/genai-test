@@ -15,19 +15,14 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function isRateLimit(status, data) {
-  const msg = JSON.stringify(data || {});
-  return status === 429 || msg.toLowerCase().includes("too many requests");
-}
-
 async function callGemini(prompt) {
-  const KEY = process.env.GEMINI_API_KEY; // ✅ Make sure Render Env Var name is EXACTLY this
-  if (!KEY) throw new Error("GEMINI_API_KEY missing on server (Render env vars)");
+  const KEY = process.env.GEMINI_API_KEY;
+  if (!KEY) throw new Error("GEMINI_API_KEY missing in Render env vars");
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${KEY}`;
 
-  // Retry on 429 a few times (Render + free tier often hits limits)
   const maxAttempts = 4;
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const resp = await fetch(url, {
       method: "POST",
@@ -40,26 +35,21 @@ async function callGemini(prompt) {
     const data = await resp.json().catch(() => ({}));
 
     if (resp.ok) {
-      const text =
-        data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-        "No text returned";
-      return text;
+      return (
+        data?.candidates?.[0]?.content?.parts?.[0]?.text || "No text returned"
+      );
     }
 
-    // If rate limited, wait and retry
-    if (isRateLimit(resp.status, data) && attempt < maxAttempts) {
-      const waitMs = 3000 * attempt; // 3s, 6s, 9s...
-      await sleep(waitMs);
+    // Retry on 429
+    if (resp.status === 429 && attempt < maxAttempts) {
+      await sleep(3000 * attempt);
       continue;
     }
 
-    // Real error from Google
-    throw new Error(
-      `Gemini API error ${resp.status}: ${JSON.stringify(data)}`
-    );
+    throw new Error(`Gemini Error ${resp.status}: ${JSON.stringify(data)}`);
   }
 
-  throw new Error("Rate limit: retries exhausted");
+  throw new Error("Rate limit retries exhausted");
 }
 
 // ---------- Routes ----------
@@ -75,6 +65,17 @@ app.get("/debug", (req, res) => {
   });
 });
 
+app.get("/routes", (req, res) => {
+  const routes = [];
+  app._router.stack.forEach((m) => {
+    if (m.route && m.route.path) {
+      const methods = Object.keys(m.route.methods).map((x) => x.toUpperCase());
+      routes.push({ path: m.route.path, methods });
+    }
+  });
+  res.json(routes);
+});
+
 app.post("/ask-ai", async (req, res) => {
   try {
     const { prompt } = req.body;
@@ -88,10 +89,9 @@ app.post("/ask-ai", async (req, res) => {
   } catch (err) {
     const msg = String(err?.message || err);
 
-    // If it is a rate limit error, return 429 (not 500)
-    if (msg.toLowerCase().includes("429") || msg.toLowerCase().includes("too many requests")) {
+    if (msg.includes("429") || msg.toLowerCase().includes("too many requests")) {
       return res.status(429).json({
-        error: "Rate limit (Gemini)",
+        error: "Rate limit",
         details: msg,
         tip: "Wait 30–60 seconds and try again.",
       });
@@ -104,20 +104,8 @@ app.post("/ask-ai", async (req, res) => {
   }
 });
 
-// List all registered routes (debug)
-app.get("/routes", (req, res) => {
-  const routes = [];
-  app._router.stack.forEach((m) => {
-    if (m.route && m.route.path) {
-      const methods = Object.keys(m.route.methods).map((x) => x.toUpperCase());
-      routes.push({ path: m.route.path, methods });
-    }
-  });
-  res.json(routes);
-});
-
-// ✅ Catch-all MUST be last
-app.all("*", (req, res) => {
+// ✅ Express 5 safe 404 handler (MUST be last)
+app.use((req, res) => {
   res.status(404).json({
     error: "Not Found",
     method: req.method,
